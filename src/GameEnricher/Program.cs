@@ -1,34 +1,46 @@
-using OpenAI;
-using OpenAI.Chat;
-using System.ClientModel;
+using System.CommandLine;
+using System.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+
+namespace GameEnricher;
 
 class Program
 {
-    static async Task Main()
+    static async Task Main(string[] args)
     {
-        string endpoint = Environment.GetEnvironmentVariable("OPENAI_ENDPOINT")
-         ?? throw new InvalidOperationException("OPENAI_ENDPOINT environment variable is not set.");
-        
-        string apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
-         ?? throw new InvalidOperationException("OPENAI_API_KEY environment variable is not set.");
-        
-        string model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
+        var rootCommand = new RootCommand("Enricher CLI")
+        {
+            CommandLineOptions.InputOption,
+            CommandLineOptions.OutputOption,
+            CommandLineOptions.OpenAiEndpointOption,
+            CommandLineOptions.OpenAiModelOption
+        };
 
-        Console.WriteLine($"Endpoint: {endpoint}");
-        Console.WriteLine($"Model: {model}");
+        var parseResult = rootCommand.Parse(args);
+        var input = parseResult.GetRequiredValue(CommandLineOptions.InputOption);
 
-        Uri endpointUri = new(endpoint);
-        ApiKeyCredential apiKeyCredential = new(apiKey);
-
-        ChatClient client = new(
-            model: model, 
-            credential: apiKeyCredential,
-            options: new OpenAIClientOptions()
+        var host = Host.CreateDefaultBuilder()
+            .ConfigureServices(services =>
             {
-                Endpoint = endpointUri
-            });
+                services.AddSingleton(new EnricherOptions
+                {
+                    Input = input,
+                    Output = parseResult.GetValue(CommandLineOptions.OutputOption) ?? new FileInfo(input.FullName + ".enriched"),
+                    Endpoint = parseResult.GetRequiredValue(CommandLineOptions.OpenAiEndpointOption),
+                    Model = parseResult.GetRequiredValue(CommandLineOptions.OpenAiModelOption),
+                    ApiKey = Util.GetRequiredEnvVar("OPENAI_API_KEY")
+                });
 
-        ChatCompletion completion = client.CompleteChat("Say 'this is a test.'");
-        Console.WriteLine($"[ASSISTANT]: {completion.Content[0].Text}");
+                services.AddSingleton<EnricherService>();
+            })
+            .Build();
+
+        var logger = host.Services.GetRequiredService<ILogger<Program>>();
+        logger.LogInformation("{process} started with args: {args}", Process.GetCurrentProcess().ProcessName, string.Join(" ", args));
+
+        var enricher = host.Services.GetRequiredService<EnricherService>();
+        await enricher.RunAsync();  
     }
 }
