@@ -1,1 +1,5 @@
 generated
+bin
+obj
+.vscode
+*.sln
